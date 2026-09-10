@@ -2,9 +2,11 @@ package auction
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	auctionUC "github.com/gratefultolord/adex-srvc/internal/usecases/auction"
 	"go.uber.org/zap"
 )
 
@@ -22,30 +24,51 @@ func NewHandler(logger *zap.Logger, usecase usecase) *Handler {
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	var req AuctionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(
+			w,
+			http.StatusText(http.StatusBadRequest),
+			http.StatusBadRequest,
+		)
 		return
 	}
 
-	if strings.TrimSpace(req.RequestId) == "" ||
-		strings.TrimSpace(req.Country) == "" ||
-		strings.TrimSpace(req.DeviceType) == "" ||
-		req.BidFloor < 0 {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+	if err := validateAuctionRequest(req); err != nil {
+		http.Error(
+			w,
+			http.StatusText(http.StatusBadRequest),
+			http.StatusBadRequest,
+		)
 		return
 	}
 
-	result, err := h.usecase.RunAuction(r.Context(), req)
+	result, err := h.usecase.RunAuction(r.Context(), auctionUC.Input{
+		RequestID:  req.RequestID,
+		Country:    req.Country,
+		DeviceType: req.DeviceType,
+		BidFloor:   req.BidFloor,
+		Categories: req.Categories,
+	})
 	if err != nil {
-		if h.logger != nil {
-			h.logger.Error("run auction", zap.Error(err))
-		}
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		h.logger.Error(
+			"h.usecase.RunAuction",
+			zap.Error(err),
+		)
+
+		http.Error(
+			w,
+			http.StatusText(http.StatusInternalServerError),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
 	resp := AuctionResponse{
-		RequestId:   result.RequestId,
+		RequestID:   result.RequestID,
 		MatchedDSPs: result.MatchedDSPs,
 		Sent:        result.Sent,
 		Succeeded:   result.Succeeded,
@@ -53,10 +76,31 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		if h.logger != nil {
-			h.logger.Error("encode auction response", zap.Error(err))
-		}
+		h.logger.Error(
+			"json.NewEncoder.Encode",
+			zap.Error(err),
+		)
 	}
+}
+
+func validateAuctionRequest(req AuctionRequest) error {
+	if strings.TrimSpace(req.RequestID) == "" {
+		return errors.New("request_id is required")
+	}
+
+	if strings.TrimSpace(req.Country) == "" {
+		return errors.New("country is required")
+	}
+
+	if strings.TrimSpace(req.DeviceType) == "" {
+		return errors.New("device_type is required")
+	}
+
+	if req.BidFloor < 0 {
+		return errors.New("bid_floor must be non-negative")
+	}
+
+	return nil
 }

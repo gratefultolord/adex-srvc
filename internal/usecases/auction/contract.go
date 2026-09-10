@@ -1,5 +1,13 @@
 package auction
 
+import (
+	"context"
+)
+
 type storage interface {
-	ListPartners() ([]string, error)
+	GetPartners(ctx context.Context) ([]Partner, error)
+}
+
+type dspClient interface {
+	SendBidRequest(ctx context.Context, partner Partner, input Input) error
 }
